@@ -1,0 +1,2020 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
+  <title>RESQNET - Emergency Response (Demo)</title>
+
+  <!-- External Libraries via CDN -->
+  <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/prop-types/15.8.1/prop-types.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/react-is@18.3.1/umd/react-is.production.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/recharts@2.12.7/umd/Recharts.js"></script>
+
+  <style>
+    :root {
+      box-sizing: border-box;
+      padding-top: env(safe-area-inset-top, 0px);
+      padding-bottom: env(safe-area-inset-bottom, 0px);
+    }
+    html {
+      scroll-padding-top: env(safe-area-inset-top, 0px);
+    }
+    body {
+      background: #0b1220;
+      color: #e2e8f0;
+      font-family: Inter, system-ui, sans-serif;
+      margin: 0;
+    }
+  </style>
+</head>
+<body>
+  <div id="root">
+    <p style="padding: 16px; color: #94a3b8;">Loading RESQNET…</p>
+  </div>
+
+  <script>
+  (() => {
+    const React = window.React;
+    const { useState, useEffect, useReducer, createContext, useContext, Component } = React;
+
+    // --- Icon Helpers ---
+    const createIcon = (char) => ({ className = "" }) =>
+      React.createElement("span", { className }, char);
+
+    const Icons = {
+      Dashboard: createIcon("\u25A6"),    // ◾
+      Map: createIcon("\u25C9"),          // ◉
+      Vehicle: createIcon("\u{1F691}"),   // 🚑
+      Hospital: createIcon("\u{1F3E5}"),  // 🏥
+      Incident: createIcon("\u{1F6A8}"),  // 🚨
+      Report: createIcon("\u271A"),        // ✚
+      Play: createIcon("\u25B6"),          // ▶
+      Pause: createIcon("\u23F8"),         // ⏸
+      Reset: createIcon("\u21BA"),         // ↺
+      Lightning: createIcon("\u26A1"),     // ⚡
+    };
+
+    // --- Coordinates & Geography (Pune, India) ---
+    const PUNE_AREAS = {
+      Swargate: [18.5018, 73.8636],
+      Shivajinagar: [18.5308, 73.8475],
+      Hadapsar: [18.5089, 73.926],
+      Kothrud: [18.5074, 73.8077],
+      "Viman Nagar": [18.5679, 73.9143],
+      Hinjewadi: [18.5912, 73.7389],
+      Katraj: [18.4575, 73.8677],
+      Pimpri: [18.6279, 73.8009],
+      Baner: [18.559, 73.7868],
+      Camp: [18.5136, 73.8786],
+    };
+
+    const getPastTime = (minutesAgo) => Date.now() - minutesAgo * 60000;
+
+    const INCIDENT_TYPES = [
+      "Fire",
+      "Medical",
+      "Road Accident",
+      "Flooding",
+      "Building Collapse",
+      "Fallen Tree",
+      "Law & Order",
+      "Road Blockage",
+      "Other"
+    ];
+
+    const INCIDENT_STATUSES = [
+      "Reported",
+      "Under Verification",
+      "Verified",
+      "Response Dispatched",
+      "Resolved"
+    ];
+
+    const SEVERITY_LEVELS = ["Low", "Medium", "High", "Critical"];
+
+    const createIncident = (id, type, area, sev, status, verified, minutesAgo, desc = "") => ({
+      id,
+      type,
+      area,
+      loc: PUNE_AREAS[area],
+      sev,
+      status,
+      verified,
+      vehicle: null,
+      desc,
+      time: getPastTime(minutesAgo),
+      timeline: [{ t: getPastTime(minutesAgo), msg: "Report received (simulated)" }],
+    });
+
+    // --- Initial Dataset Factory ---
+    function getInitialData() {
+      const createVehicle = (id, type, area, status = "Available", incident = null) => ({
+        id,
+        type,
+        area,
+        loc: PUNE_AREAS[area],
+        status,
+        incident,
+        updated: getPastTime(Math.random() * 20 + 1),
+      });
+
+      const vehicles = [
+        createVehicle("AMB-001", "Ambulance", "Shivajinagar"),
+        createVehicle("AMB-002", "Ambulance", "Swargate"),
+        createVehicle("AMB-003", "Ambulance", "Hadapsar"),
+        createVehicle("AMB-004", "Ambulance", "Kothrud", "Busy"),
+        createVehicle("AMB-005", "Ambulance", "Baner", "Dispatched", "INC-1003"),
+        createVehicle("POL-001", "Police", "Camp"),
+        createVehicle("POL-002", "Police", "Swargate"),
+        createVehicle("POL-003", "Police", "Viman Nagar", "Busy"),
+        createVehicle("POL-004", "Police", "Pimpri"),
+        createVehicle("FIRE-001", "Fire", "Shivajinagar"),
+        createVehicle("FIRE-002", "Fire", "Hadapsar"),
+        createVehicle("FIRE-003", "Fire", "Katraj", "Dispatched", "INC-1001"),
+      ];
+
+      const createHospital = (id, name, area, lat, lng, genTotal, genOcc, icuTotal, icuOcc, ed) => ({
+        id,
+        name,
+        area,
+        loc: [lat, lng],
+        gen: [genTotal, genOcc],
+        icu: [icuTotal, icuOcc],
+        ed,
+        updated: getPastTime(Math.random() * 30 + 2),
+      });
+
+      const hospitals = [
+        createHospital("H1", "Sassoon General Hospital", "Pune Station", 18.5286, 73.8744, 300, 262, 30, 26, "Open"),
+        createHospital("H2", "Ruby Hall Clinic", "Sassoon Road", 18.5314, 73.8774, 200, 168, 24, 20, "Open"),
+        createHospital("H3", "Jehangir Hospital", "Sassoon Road", 18.5303, 73.8759, 150, 141, 14, 14, "Full"),
+        createHospital("H4", "Deenanath Mangeshkar Hospital", "Erandwane", 18.5069, 73.8296, 220, 160, 26, 17, "Open"),
+        createHospital("H5", "KEM Hospital Pune", "Rasta Peth", 18.519, 73.87, 180, 150, 16, 13, "Open"),
+        createHospital("H6", "Sahyadri Hospital Deccan", "Deccan", 18.516, 73.841, 130, 98, 14, 9, "Open"),
+        createHospital("H7", "Noble Hospital", "Hadapsar", 18.513, 73.929, 110, 80, 12, 7, "Open"),
+        createHospital("H8", "Poona Hospital", "Sadashiv Peth", 18.509, 73.847, 100, 88, 10, 9, "Diverting"),
+        createHospital("H9", "Bharati Hospital", "Dhankawadi", 18.459, 73.859, 160, 120, 18, 11, "Open"),
+        createHospital("H10", "Jupiter Hospital", "Baner", 18.558, 73.78, 120, 84, 14, 8, "Open"),
+        createHospital("H11", "Columbia Asia Hospital", "Kharadi", 18.552, 73.94, 90, 66, 10, 6, "Open"),
+        createHospital("H12", "Aditya Birla Memorial Hospital", "Chinchwad", 18.614, 73.784, 170, 158, 16, 15, "Diverting"),
+      ];
+
+      const incidents = [
+        createIncident("INC-1001", "Fire", "Katraj", "High", "Response Dispatched", true, 25, "Warehouse fire"),
+        createIncident("INC-1002", "Road Accident", "Hinjewadi", "Critical", "Verified", true, 12, "Multi-vehicle collision"),
+        createIncident("INC-1003", "Medical", "Baner", "High", "Response Dispatched", true, 18, "Cardiac emergency"),
+        createIncident("INC-1004", "Flooding", "Kothrud", "Medium", "Verified", true, 90),
+        createIncident("INC-1005", "Fallen Tree", "Camp", "Low", "Reported", false, 8),
+        createIncident("INC-1006", "Law & Order", "Pimpri", "Medium", "Under Verification", false, 15),
+        createIncident("INC-1007", "Building Collapse", "Hadapsar", "Critical", "Verified", true, 40),
+        createIncident("INC-1008", "Road Blockage", "Swargate", "Medium", "Reported", false, 5),
+        createIncident("INC-1009", "Fire", "Viman Nagar", "Low", "Resolved", true, 200),
+        createIncident("INC-1010", "Medical", "Shivajinagar", "Medium", "Resolved", true, 260),
+      ];
+
+      incidents[0].vehicle = "FIRE-003";
+      incidents[2].vehicle = "AMB-005";
+
+      const createBlockage = (id, road, area, reason, sev, path, reopen) => ({
+        id,
+        road,
+        area,
+        loc: PUNE_AREAS[area],
+        reason,
+        sev,
+        path,
+        reopen,
+        active: true,
+        time: getPastTime(Math.random() * 120 + 5),
+      });
+
+      const blocks = [
+        createBlockage("RB-1", "Pune-Satara Rd", "Swargate", "Waterlogging", "High", [[18.503, 73.862], [18.498, 73.866]], "~2 h"),
+        createBlockage("RB-2", "Karve Rd", "Kothrud", "Tree fall", "Medium", [[18.5, 73.82], [18.504, 73.81]], "~45 min"),
+        createBlockage("RB-3", "Solapur Rd", "Hadapsar", "Collapse debris", "Critical", [[18.51, 73.92], [18.507, 73.93]], "Unknown"),
+        createBlockage("RB-4", "FC Road", "Shivajinagar", "Accident", "Medium", [[18.528, 73.84], [18.533, 73.85]], "~30 min"),
+        createBlockage("RB-5", "Mumbai-Bengaluru Hwy", "Baner", "Road work", "Low", [[18.56, 73.78], [18.558, 73.795]], "~4 h"),
+        createBlockage("RB-6", "Nagar Rd", "Viman Nagar", "Flooding", "High", [[18.566, 73.91], [18.57, 73.918]], "~1 h"),
+        createBlockage("RB-7", "Katraj Ghat", "Katraj", "Landslide debris", "High", [[18.46, 73.865], [18.455, 73.87]], "Unknown"),
+        createBlockage("RB-8", "Hinjewadi Phase 1", "Hinjewadi", "Accident", "High", [[18.59, 73.735], [18.593, 73.742]], "~1 h"),
+      ];
+
+      return {
+        vehicles,
+        hospitals,
+        incidents,
+        blocks,
+        role: "Emergency Administrator",
+        sim: false,
+        toast: null,
+        sel: "INC-1002",
+        updated: Date.now(),
+      };
+    }
+
+    const STATIONS = [
+      ["Police", "Shivajinagar Police Station", [18.532, 73.847]],
+      ["Police", "Swargate Police Station", [18.501, 73.863]],
+      ["Police", "Deccan Gymkhana Police Station", [18.517, 73.842]],
+      ["Police", "Hadapsar Police Station", [18.5, 73.926]],
+      ["Police", "Kothrud Police Station", [18.505, 73.81]],
+      ["Fire", "Pune Fire Brigade - Shivajinagar", [18.529, 73.85]],
+      ["Fire", "Pune Fire Brigade - Kasba Peth", [18.516, 73.856]],
+      ["Fire", "Fire Station - Hadapsar", [18.507, 73.923]],
+      ["Fire", "Fire Station - Kothrud", [18.509, 73.817]],
+      ["Fire", "PCMC Fire Station - Pimpri", [18.626, 73.8]],
+    ];
+
+    const EMERGENCY_NUMBERS = [
+      ["National emergency", "112"],
+      ["Police", "100"],
+      ["Fire", "101"],
+      ["Ambulance (Maharashtra EMS)", "108"],
+    ];
+
+    // --- Distance & Beds Utility ---
+    const calcDistance = (coord1, coord2) => {
+      const toRad = (deg) => (deg * Math.PI) / 180;
+      const dLat = toRad(coord2[0] - coord1[0]);
+      const dLng = toRad(coord2[1] - coord1[1]);
+      const a =
+        Math.sin(dLat / 2) ** 2 +
+        Math.cos(toRad(coord1[0])) * Math.cos(toRad(coord2[0])) * Math.sin(dLng / 2) ** 2;
+      return 12742 * Math.asin(Math.sqrt(a));
+    };
+
+    const availableBeds = ([total, occupied]) => total - occupied;
+
+    const addTimelineEvent = (incident, msg) => ({
+      ...incident,
+      timeline: [...incident.timeline, { t: Date.now(), msg: `${msg} (simulated)` }],
+    });
+
+    const withTimestamp = (state, patch) => ({
+      ...state,
+      ...patch,
+      updated: Date.now(),
+    });
+
+    // --- State Reducer ---
+    function appReducer(state, action) {
+      switch (action.type) {
+        case "reset":
+          return { ...getInitialData(), role: state.role };
+        case "role":
+          return { ...state, role: action.v };
+        case "sim":
+          return { ...state, sim: !state.sim };
+        case "toast":
+          return { ...state, toast: action.v };
+        case "select":
+          return { ...state, sel: action.v };
+        case "addIncident":
+          return withTimestamp(state, {
+            incidents: [action.v, ...state.incidents],
+            sel: action.v.id,
+            toast: `${action.v.id} added${action.v.verified ? "" : " (unverified)"} - demo only`,
+          });
+        case "inc":
+          return withTimestamp(state, {
+            incidents: state.incidents.map((i) =>
+              i.id === action.id ? addTimelineEvent({ ...i, ...action.patch }, action.msg) : i
+            ),
+          });
+        case "assign": {
+          const inc = state.incidents.find((i) => i.id === action.inc);
+          return withTimestamp(state, {
+            vehicles: state.vehicles.map((v) =>
+              v.id === inc.vehicle && v.id !== action.veh
+                ? { ...v, status: "Available", incident: null }
+                : v.id === action.veh
+                ? { ...v, status: "Dispatched", incident: action.inc, updated: Date.now() }
+                : v
+            ),
+            incidents: state.incidents.map((i) =>
+              i.id === action.inc
+                ? addTimelineEvent(
+                    { ...i, vehicle: action.veh, status: "Response Dispatched", verified: true },
+                    `${action.veh} assigned (demo, no real dispatch)`
+                  )
+                : i
+            ),
+            toast: `${action.veh} assigned to ${action.inc} (simulated)`,
+          });
+        }
+        case "vstatus": {
+          return withTimestamp(state, {
+            vehicles: state.vehicles.map((v) =>
+              v.id === action.id
+                ? {
+                    ...v,
+                    status: action.v,
+                    incident: action.v === "Dispatched" ? v.incident : null,
+                    updated: Date.now(),
+                  }
+                : v
+            ),
+            incidents: state.incidents.map((i) =>
+              i.vehicle === action.id && action.v !== "Dispatched"
+                ? addTimelineEvent({ ...i, vehicle: null }, `${action.id} marked ${action.v}`)
+                : i
+            ),
+            toast: `${action.id} set to ${action.v} (simulated)`,
+          });
+        }
+        case "bed":
+          return withTimestamp(state, {
+            hospitals: state.hospitals.map((h) =>
+              h.id === action.id
+                ? {
+                    ...h,
+                    [action.kind]: [
+                      h[action.kind][0],
+                      Math.max(0, Math.min(h[action.kind][0], h[action.kind][1] + action.delta)),
+                    ],
+                    updated: Date.now(),
+                  }
+                : h
+            ),
+          });
+        case "addVehicle":
+          return withTimestamp(state, {
+            vehicles: [...state.vehicles, action.v],
+            toast: `${action.v.id} added`,
+          });
+        case "editVehicle":
+          return withTimestamp(state, {
+            vehicles: state.vehicles.map((v) =>
+              v.id === action.id ? { ...v, ...action.patch, updated: Date.now() } : v
+            ),
+          });
+        case "tick": {
+          const [r1, r2, r3] = action.r;
+          if (r1 < 0.4) {
+            const idleVehicles = state.vehicles.filter((v) => v.status !== "Dispatched");
+            if (!idleVehicles.length) return state;
+            const chosen = idleVehicles[Math.floor(r2 * idleVehicles.length)];
+            return withTimestamp(state, {
+              vehicles: state.vehicles.map((v) =>
+                v.id === chosen.id
+                  ? {
+                      ...v,
+                      status: chosen.status === "Available" ? "Busy" : "Available",
+                      updated: Date.now(),
+                    }
+                  : v
+              ),
+            });
+          }
+          if (r1 < 0.8) {
+            const hospital = state.hospitals[Math.floor(r2 * state.hospitals.length)];
+            const delta = r3 < 0.5 ? -1 : 1;
+            return withTimestamp(state, {
+              hospitals: state.hospitals.map((h) =>
+                h.id === hospital.id
+                  ? {
+                      ...h,
+                      gen: [h.gen[0], Math.max(0, Math.min(h.gen[0], h.gen[1] + delta * 2))],
+                      icu: r3 > 0.8 ? [h.icu[0], Math.max(0, Math.min(h.icu[0], h.icu[1] + delta))] : h.icu,
+                      updated: Date.now(),
+                    }
+                  : h
+              ),
+            });
+          }
+          if (r1 < 0.9) {
+            const areaKeys = Object.keys(PUNE_AREAS);
+            const demoTypes = ["Fallen Tree", "Road Blockage", "Flooding", "Medical"];
+            const newInc = createIncident(
+              "INC-" + (Date.now() % 100000),
+              demoTypes[Math.floor(r3 * demoTypes.length)],
+              areaKeys[Math.floor(r2 * areaKeys.length)],
+              "Medium",
+              "Reported",
+              false,
+              0,
+              "Simulated citizen report"
+            );
+            return withTimestamp(state, {
+              incidents: [newInc, ...state.incidents],
+              toast: `New simulated report ${newInc.id}`,
+            });
+          }
+          const chosenBlock = state.blocks[Math.floor(r2 * state.blocks.length)];
+          return withTimestamp(state, {
+            blocks: state.blocks.map((b) =>
+              b.id === chosenBlock.id ? { ...b, active: !b.active, time: Date.now() } : b
+            ),
+          });
+        }
+        default:
+          return state;
+      }
+    }
+
+    const AppContext = createContext();
+
+    function AppProvider({ children }) {
+      const [state, dispatch] = useReducer(appReducer, null, () => {
+        try {
+          return { ...getInitialData(), ...JSON.parse(localStorage.getItem("resqnet")) };
+        } catch {
+          return getInitialData();
+        }
+      });
+
+      useEffect(() => {
+        try {
+          localStorage.setItem("resqnet", JSON.stringify({ ...state, toast: null }));
+        } catch {}
+      }, [state]);
+
+      useEffect(() => {
+        if (!state.sim) return;
+        const timer = setInterval(() => {
+          dispatch({ type: "tick", r: [Math.random(), Math.random(), Math.random()] });
+        }, 4000);
+        return () => clearInterval(timer);
+      }, [state.sim]);
+
+      return React.createElement(AppContext.Provider, { value: [state, dispatch] }, children);
+    }
+
+    const useApp = () => useContext(AppContext);
+
+    // --- Recommendation Logic ---
+    const getResponderType = (incident) =>
+      incident.type === "Fire" ? "Fire" : incident.type === "Law & Order" ? "Police" : "Ambulance";
+
+    const needsHospital = (incident) =>
+      ["Medical", "Road Accident", "Building Collapse", "Fire"].includes(incident.type);
+
+    function recommendResources(state, incident) {
+      const respType = getResponderType(incident);
+      const vehicles = state.vehicles
+        .filter((v) => v.type === respType && v.status === "Available")
+        .map((v) => ({ ...v, d: calcDistance(v.loc, incident.loc) }))
+        .sort((a, b) => a.d - b.d);
+
+      const police =
+        incident.type === "Road Accident"
+          ? state.vehicles
+              .filter((v) => v.type === "Police" && v.status === "Available")
+              .map((v) => ({ ...v, d: calcDistance(v.loc, incident.loc) }))
+              .sort((a, b) => a.d - b.d)
+          : [];
+
+      const hospitals = needsHospital(incident)
+        ? state.hospitals
+            .filter(
+              (h) =>
+                h.ed !== "Full" &&
+                availableBeds(h.gen) > 0 &&
+                (incident.sev !== "Critical" && incident.sev !== "High" || availableBeds(h.icu) > 0)
+            )
+            .map((h) => ({ ...h, d: calcDistance(h.loc, incident.loc) }))
+            .sort((a, b) => a.d - b.d)
+        : [];
+
+      const blocks = state.blocks
+        .filter((b) => b.active && calcDistance(b.loc, incident.loc) < 4)
+        .map((b) => ({ ...b, d: calcDistance(b.loc, incident.loc) }))
+        .sort((a, b) => a.d - b.d);
+
+      return { type: respType, vehicles, police, hospitals, blocks };
+    }
+
+    // --- Common UI Components ---
+    class ErrorBoundary extends Component {
+      state = { e: null };
+      static getDerivedStateFromError(e) {
+        return { e };
+      }
+      render() {
+        return this.state.e
+          ? React.createElement(
+              "div",
+              { className: "p-4 rounded-xl border border-red-600 text-red-300 text-sm" },
+              "This page hit an error: ",
+              String(this.state.e.message)
+            )
+          : this.props.children;
+      }
+    }
+
+    const formatRelativeTime = (timestamp) => {
+      const mins = Math.round((Date.now() - timestamp) / 60000);
+      if (mins < 1) return "just now";
+      if (mins < 60) return `${mins} min ago`;
+      return `${Math.round(mins / 60)} h ago`;
+    };
+
+    const Card = ({ title, children, className = "" }) =>
+      React.createElement(
+        "section",
+        { className: `rounded-xl bg-slate-800/60 border border-slate-700 p-4 shadow-lg ${className}` },
+        title && React.createElement("h3", { className: "text-sm font-semibold text-slate-300 mb-3" }, title),
+        children
+      );
+
+    const BADGE_COLORS = {
+      Critical: "bg-red-500/20 text-red-300",
+      High: "bg-orange-500/20 text-orange-300",
+      Medium: "bg-yellow-500/20 text-yellow-200",
+      Available: "bg-green-500/20 text-green-300",
+      Open: "bg-green-500/20 text-green-300",
+      Resolved: "bg-green-500/20 text-green-300",
+      Dispatched: "bg-orange-500/20 text-orange-300",
+      Diverting: "bg-orange-500/20 text-orange-300",
+      Busy: "bg-red-500/20 text-red-300",
+      Full: "bg-red-500/20 text-red-300",
+      Unverified: "bg-yellow-500/20 text-yellow-200",
+    };
+
+    const Badge = ({ v }) =>
+      React.createElement(
+        "span",
+        { className: `px-2 py-0.5 rounded-full text-xs whitespace-nowrap ${BADGE_COLORS[v] || "bg-slate-600/40 text-slate-300"}` },
+        v
+      );
+
+    const inputClasses = "bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-100 w-full";
+    const primaryButtonClasses = "px-3 py-2 rounded-lg text-sm font-medium bg-red-600 hover:bg-red-500 text-white disabled:opacity-40 transition";
+    const secondaryButtonClasses = "px-3 py-2 rounded-lg text-sm font-medium bg-slate-700 hover:bg-slate-600 text-white transition";
+
+    const Recharts = window.Recharts || {};
+    const NullComp = () => null;
+    const PieChart = Recharts.PieChart || NullComp;
+    const Pie = Recharts.Pie || NullComp;
+    const Cell = Recharts.Cell || NullComp;
+    const Tooltip = Recharts.Tooltip || NullComp;
+    const ResponsiveContainer = Recharts.ResponsiveContainer || NullComp;
+    const BarChart = Recharts.BarChart || NullComp;
+    const Bar = Recharts.Bar || NullComp;
+    const XAxis = Recharts.XAxis || NullComp;
+    const YAxis = Recharts.YAxis || NullComp;
+
+    // --- Tab 1: Command Center ---
+    function DashboardView() {
+      const [state] = useApp();
+      const vehicles = state.vehicles;
+
+      const countVehicles = (type, status) =>
+        vehicles.filter((v) => v.type === type && (!status || v.status === status)).length;
+
+      const activeIncidents = state.incidents.filter((i) => i.status !== "Resolved");
+
+      const stats = [
+        ["Vehicles", vehicles.length],
+        ["Ambulances free", countVehicles("Ambulance", "Available"), "g"],
+        ["Ambulances busy", vehicles.filter((v) => v.type === "Ambulance" && v.status !== "Available").length, "o"],
+        ["Police free", countVehicles("Police", "Available"), "g"],
+        ["Fire trucks free", countVehicles("Fire", "Available"), "g"],
+        ["Hospitals", state.hospitals.length],
+        ["General beds free", state.hospitals.reduce((acc, h) => acc + availableBeds(h.gen), 0), "g"],
+        ["ICU beds free", state.hospitals.reduce((acc, h) => acc + availableBeds(h.icu), 0), "g"],
+        ["Road blockages", state.blocks.filter((b) => b.active).length, "o"],
+        ["Active incidents", activeIncidents.length, "r"],
+      ];
+
+      const colorMap = { g: "text-green-400", o: "text-orange-400", r: "text-red-400" };
+
+      const pieData = ["Critical", "High", "Medium", "Low"].map((level, idx) => ({
+        name: level,
+        value: activeIncidents.filter((i) => i.sev === level).length,
+        fill: ["#ef4444", "#f97316", "#eab308", "#64748b"][idx],
+      }));
+
+      const incidentTypeCounts = Object.entries(
+        state.incidents.reduce((acc, inc) => ({ ...acc, [inc.type]: (acc[inc.type] || 0) + 1 }), {})
+      ).map(([name, n]) => ({ name, n }));
+
+      const criticalIncidents = activeIncidents.filter((i) => i.sev === "Critical");
+
+      return React.createElement(
+        "div",
+        { className: "space-y-4" },
+        React.createElement(
+          "div",
+          { className: "flex items-center gap-2" },
+          React.createElement("h1", { className: "text-xl font-semibold" }, "Command Center"),
+          React.createElement("span", { className: "text-xs text-slate-500" }, "Last updated ", formatRelativeTime(state.updated))
+        ),
+        criticalIncidents.length > 0 &&
+          React.createElement(
+            "div",
+            { className: "rounded-xl border border-red-600 bg-red-900/30 p-3 text-sm" },
+            "\u26A0 ",
+            criticalIncidents.length,
+            " critical incident(s): ",
+            criticalIncidents.map((i) => `${i.id} ${i.type} @ ${i.area}`).join(" | ")
+          ),
+        React.createElement(
+          "div",
+          { className: "grid grid-cols-2 md:grid-cols-5 gap-3" },
+          stats.map(([label, val, col]) =>
+            React.createElement(
+              Card,
+              { key: label },
+              React.createElement("div", { className: "text-xs text-slate-400" }, label),
+              React.createElement("div", { className: `text-3xl font-bold ${colorMap[col] || ""}` }, val)
+            )
+          )
+        ),
+        React.createElement(
+          "div",
+          { className: "grid md:grid-cols-2 gap-4" },
+          React.createElement(
+            Card,
+            { title: "Incident priority (open)" },
+            React.createElement(
+              "div",
+              { className: "h-56" },
+              React.createElement(
+                ResponsiveContainer,
+                null,
+                React.createElement(
+                  PieChart,
+                  null,
+                  React.createElement(
+                    Pie,
+                    { data: pieData, dataKey: "value", nameKey: "name", label: true },
+                    pieData.map((entry) => React.createElement(Cell, { key: entry.name, fill: entry.fill }))
+                  ),
+                  React.createElement(Tooltip, null)
+                )
+              )
+            )
+          ),
+          React.createElement(
+            Card,
+            { title: "Response activity by incident type" },
+            React.createElement(
+              "div",
+              { className: "h-56" },
+              React.createElement(
+                ResponsiveContainer,
+                null,
+                React.createElement(
+                  BarChart,
+                  { data: incidentTypeCounts },
+                  React.createElement(XAxis, { dataKey: "name", tick: { fontSize: 10, fill: "#94a3b8" } }),
+                  React.createElement(YAxis, { allowDecimals: false, tick: { fill: "#94a3b8" } }),
+                  React.createElement(Tooltip, null),
+                  React.createElement(Bar, { dataKey: "n", fill: "#ef4444" })
+                )
+              )
+            )
+          )
+        ),
+        React.createElement(
+          "div",
+          { className: "grid md:grid-cols-3 gap-4" },
+          React.createElement(
+            Card,
+            { title: "Recent incidents" },
+            state.incidents.slice(0, 6).map((i) =>
+              React.createElement(
+                "div",
+                { key: i.id, className: "flex justify-between gap-2 py-1 text-sm border-b border-slate-700/50" },
+                React.createElement("span", null, i.id, " ", i.type, " ", React.createElement("span", { className: "text-slate-500" }, i.area)),
+                React.createElement(Badge, { v: i.sev })
+              )
+            )
+          ),
+          React.createElement(
+            Card,
+            { title: "Hospital capacity updates" },
+            [...state.hospitals]
+              .sort((a, b) => b.updated - a.updated)
+              .slice(0, 6)
+              .map((h) =>
+                React.createElement(
+                  "div",
+                  { key: h.id, className: "flex justify-between py-1 text-sm border-b border-slate-700/50" },
+                  React.createElement("span", null, h.name),
+                  React.createElement(
+                    "span",
+                    { className: "text-slate-400" },
+                    availableBeds(h.gen),
+                    " / ",
+                    availableBeds(h.icu),
+                    " ICU \xB7 ",
+                    formatRelativeTime(h.updated)
+                  )
+                )
+              )
+          ),
+          React.createElement(
+            Card,
+            { title: "Road blockages & vehicle updates" },
+            state.blocks
+              .filter((b) => b.active)
+              .slice(0, 4)
+              .map((b) =>
+                React.createElement(
+                  "div",
+                  { key: b.id, className: "py-1 text-sm border-b border-slate-700/50" },
+                  b.road,
+                  " ",
+                  React.createElement("span", { className: "text-slate-500" }, b.reason, " \xB7 ", formatRelativeTime(b.time))
+                )
+              ),
+            [...vehicles]
+              .sort((a, b) => b.updated - a.updated)
+              .slice(0, 3)
+              .map((v) =>
+                React.createElement(
+                  "div",
+                  { key: v.id, className: "py-1 text-sm" },
+                  v.id,
+                  " ",
+                  React.createElement(Badge, { v: v.status }),
+                  " ",
+                  React.createElement("span", { className: "text-slate-500" }, formatRelativeTime(v.updated))
+                )
+              )
+          )
+        )
+      );
+    }
+
+    // --- Tab 2: Live Map ---
+    const MAP_COLORS = {
+      Ambulance: "#22c55e",
+      Police: "#3b82f6",
+      Fire: "#f97316",
+      Hospital: "#e2e8f0",
+      Incident: "#ef4444",
+      Block: "#eab308",
+      Station: "#38bdf8",
+    };
+
+    const projectCoords = ([lat, lng]) => [
+      ((lng - 73.72) / 0.24) * 800,
+      ((18.66 - lat) / 0.22) * 500,
+    ];
+
+    const MapMarker = ({ p, r, c, fill, t, l, k, pickIt }) => {
+      const [cx, cy] = projectCoords(p);
+      return React.createElement("circle", {
+        cx,
+        cy,
+        r,
+        fill: fill || c,
+        fillOpacity: "0.85",
+        stroke: c,
+        strokeWidth: "3",
+        className: "cursor-pointer",
+        onClick: () => pickIt({ t, l, k }),
+      });
+    };
+
+    function LiveMapView() {
+      const [state, dispatch] = useApp();
+      const [filters, setFilters] = useState({
+        Ambulance: 1,
+        Police: 1,
+        Fire: 1,
+        Hospital: 1,
+        Incident: 1,
+        Block: 1,
+        Station: 1,
+      });
+      const [selectedInfo, setSelectedInfo] = useState(null);
+
+      const isCitizen = state.role === "Citizen";
+      const selIncident = state.incidents.find((i) => i.id === state.sel);
+      const rec = selIncident && recommendResources(state, selIncident);
+      const nearbyBlockIds = new Set((rec?.blocks || []).map((b) => b.id));
+
+      return React.createElement(
+        "div",
+        { className: "space-y-3" },
+        React.createElement(
+          "div",
+          { className: "flex items-center gap-2" },
+          React.createElement("h1", { className: "text-xl font-semibold" }, "Live Emergency Map")
+        ),
+        React.createElement(
+          "p",
+          { className: "text-xs text-slate-400" },
+          "Schematic Pune map. Hospital and station names are real public facilities at approximate positions; vehicles, bed counts, incidents and blockages are simulated (not real GPS). ",
+          isCitizen && "Responder locations are hidden in the public view."
+        ),
+        React.createElement(
+          "div",
+          { className: "flex flex-wrap gap-3 text-sm" },
+          Object.keys(filters)
+            .filter((f) => !(isCitizen && ["Ambulance", "Police", "Fire"].includes(f)))
+            .map((f) =>
+              React.createElement(
+                "label",
+                { key: f, className: "flex items-center gap-1 cursor-pointer" },
+                React.createElement("input", {
+                  type: "checkbox",
+                  checked: !!filters[f],
+                  onChange: () => setFilters({ ...filters, [f]: filters[f] ? 0 : 1 }),
+                }),
+                React.createElement("span", { style: { color: MAP_COLORS[f] } }, "\u25CF"),
+                f === "Block" ? "Road blockages" : f === "Station" ? "Police/fire stations" : f
+              )
+            )
+        ),
+        React.createElement(
+          Card,
+          { className: "!p-0 overflow-hidden" },
+          React.createElement(
+            "svg",
+            { viewBox: "0 0 800 500", className: "w-full bg-slate-900" },
+            [1, 2, 3, 4, 5, 6, 7].map((s) =>
+              React.createElement("line", {
+                key: "v" + s,
+                x1: s * 100,
+                y1: "0",
+                x2: s * 100,
+                y2: "500",
+                stroke: "#1e293b",
+              })
+            ),
+            [1, 2, 3, 4].map((s) =>
+              React.createElement("line", {
+                key: "h" + s,
+                x1: "0",
+                y1: s * 100,
+                x2: "800",
+                y2: s * 100,
+                stroke: "#1e293b",
+              })
+            ),
+            Object.entries(PUNE_AREAS).map(([name, coords]) => {
+              const [x, y] = projectCoords(coords);
+              return React.createElement(
+                "text",
+                { key: name, x: x + 12, y: y - 12, fill: "#475569", fontSize: "13" },
+                name
+              );
+            }),
+            filters.Block &&
+              state.blocks
+                .filter((b) => b.active)
+                .map((b) =>
+                  React.createElement("polyline", {
+                    key: b.id,
+                    points: b.path.map((pt) => projectCoords(pt).join(",")).join(" "),
+                    stroke: nearbyBlockIds.has(b.id) ? "#ef4444" : MAP_COLORS.Block,
+                    strokeWidth: nearbyBlockIds.has(b.id) ? 9 : 6,
+                    strokeDasharray: "10 6",
+                    fill: "none",
+                    className: "cursor-pointer",
+                    onClick: () =>
+                      setSelectedInfo({
+                        t: `${b.road} (blocked)`,
+                        l: [
+                          b.area,
+                          `Reason: ${b.reason}`,
+                          `Severity: ${b.sev}`,
+                          `Reported ${formatRelativeTime(b.time)}`,
+                          `Reopening: ${b.reopen}`,
+                        ],
+                      }),
+                  })
+                ),
+            filters.Station &&
+              STATIONS.map(([stType, name, coords]) =>
+                React.createElement(MapMarker, {
+                  key: name,
+                  p: coords,
+                  r: 6,
+                  c: MAP_COLORS.Station,
+                  t: name,
+                  l: [`${stType} station (approximate position)`],
+                  pickIt: setSelectedInfo,
+                })
+              ),
+            filters.Hospital &&
+              state.hospitals.map((h) =>
+                React.createElement(MapMarker, {
+                  key: h.id,
+                  p: h.loc,
+                  r: 11,
+                  c: MAP_COLORS.Hospital,
+                  fill: availableBeds(h.icu) < 2 ? "#ef4444" : "#22c55e",
+                  t: h.name,
+                  l: [
+                    `General beds: ${availableBeds(h.gen)}/${h.gen[0]} (simulated)`,
+                    `ICU beds: ${availableBeds(h.icu)}/${h.icu[0]} (simulated)`,
+                    `ED: ${h.ed}`,
+                    "Contact: use 112 for real emergencies",
+                    `Updated ${formatRelativeTime(h.updated)}`,
+                    "Verify with the hospital before transport.",
+                  ],
+                  pickIt: setSelectedInfo,
+                })
+              ),
+            !isCitizen &&
+              state.vehicles
+                .filter((v) => filters[v.type])
+                .map((v) =>
+                  React.createElement(MapMarker, {
+                    key: v.id,
+                    p: v.loc,
+                    r: 8,
+                    c: MAP_COLORS[v.type],
+                    t: `${v.id} (${v.type})`,
+                    l: [
+                      `Status: ${v.status}`,
+                      `Incident: ${v.incident || "none"}`,
+                      `Simulated update: ${formatRelativeTime(v.updated)}`,
+                    ],
+                    pickIt: setSelectedInfo,
+                  })
+                ),
+            filters.Incident &&
+              state.incidents
+                .filter((i) => i.status !== "Resolved")
+                .map((i) =>
+                  React.createElement(MapMarker, {
+                    key: i.id,
+                    p: i.loc,
+                    r: i.id === state.sel ? 18 : 12,
+                    c: MAP_COLORS.Incident,
+                    t: `${i.id} ${i.type}`,
+                    k: i.id,
+                    l: [`${i.area} \xB7 ${i.sev}`, `${i.status}${i.verified ? "" : " (UNVERIFIED)"}`],
+                    pickIt: setSelectedInfo,
+                  })
+                )
+          )
+        ),
+        React.createElement(
+          Card,
+          { title: selectedInfo ? selectedInfo.t : "Tap any marker for details" },
+          selectedInfo &&
+            selectedInfo.l.map((line, idx) =>
+              React.createElement("div", { key: idx, className: "text-sm" }, line)
+            ),
+          selectedInfo &&
+            selectedInfo.k &&
+            React.createElement(
+              "button",
+              {
+                className: "mt-2 px-3 py-1.5 rounded-lg text-sm bg-red-600 text-white",
+                onClick: () => dispatch({ type: "select", v: selectedInfo.k }),
+              },
+              "Select this incident (highlights nearby blockages)"
+            )
+        ),
+        React.createElement(
+          "p",
+          { className: "text-xs text-slate-500" },
+          `Legend: green/blue/orange = ambulance/police/fire (simulated); white ring = hospital (red fill = low ICU); red = incident (large = selected ${state.sel}); yellow dashes = blockage (red = near selected incident); sky-blue = stations.`
+        )
+      );
+    }
+
+    // --- Tab 3: Vehicles Management ---
+    function VehiclesView() {
+      const [state, dispatch] = useApp();
+      const [search, setSearch] = useState("");
+      const [typeFilter, setTypeFilter] = useState("");
+      const [statusFilter, setStatusFilter] = useState("");
+      const [form, setForm] = useState({ id: "", type: "Ambulance", area: "Kothrud" });
+      const [error, setError] = useState("");
+
+      const filteredVehicles = state.vehicles.filter(
+        (v) =>
+          (!typeFilter || v.type === typeFilter) &&
+          (!statusFilter || v.status === statusFilter) &&
+          (v.id + v.area).toLowerCase().includes(search.toLowerCase())
+      );
+
+      const unresolvedIncidents = state.incidents.filter((i) => i.status !== "Resolved");
+
+      const handleAddVehicle = () => {
+        const idUpper = form.id.trim().toUpperCase();
+        if (!/^[A-Z]{3,4}-\d{3}$/.test(idUpper)) return setError("ID format like AMB-006");
+        if (state.vehicles.some((v) => v.id === idUpper)) return setError("ID already exists");
+        setError("");
+        dispatch({
+          type: "addVehicle",
+          v: {
+            id: idUpper,
+            type: form.type,
+            area: form.area,
+            loc: PUNE_AREAS[form.area],
+            status: "Available",
+            incident: null,
+            updated: Date.now(),
+          },
+        });
+        setForm({ ...form, id: "" });
+      };
+
+      return React.createElement(
+        "div",
+        { className: "space-y-4" },
+        React.createElement(
+          "div",
+          { className: "flex gap-2 items-center" },
+          React.createElement("h1", { className: "text-xl font-semibold" }, "Emergency Vehicles")
+        ),
+        React.createElement(
+          Card,
+          { title: "Add vehicle (demo)" },
+          React.createElement(
+            "div",
+            { className: "grid sm:grid-cols-4 gap-2" },
+            React.createElement("input", {
+              className: inputClasses,
+              placeholder: "AMB-006",
+              value: form.id,
+              onChange: (e) => setForm({ ...form, id: e.target.value }),
+            }),
+            React.createElement(
+              "select",
+              {
+                className: inputClasses,
+                value: form.type,
+                onChange: (e) => setForm({ ...form, type: e.target.value }),
+              },
+              ["Ambulance", "Police", "Fire"].map((t) => React.createElement("option", { key: t }, t))
+            ),
+            React.createElement(
+              "select",
+              {
+                className: inputClasses,
+                value: form.area,
+                onChange: (e) => setForm({ ...form, area: e.target.value }),
+              },
+              Object.keys(PUNE_AREAS).map((a) => React.createElement("option", { key: a }, a))
+            ),
+            React.createElement("button", { className: primaryButtonClasses, onClick: handleAddVehicle }, "Add")
+          ),
+          error && React.createElement("p", { className: "text-red-400 text-xs mt-1" }, error)
+        ),
+        React.createElement(
+          "div",
+          { className: "grid sm:grid-cols-3 gap-2" },
+          React.createElement("input", {
+            className: inputClasses,
+            placeholder: "Search ID / location",
+            value: search,
+            onChange: (e) => setSearch(e.target.value),
+          }),
+          React.createElement(
+            "select",
+            { className: inputClasses, value: typeFilter, onChange: (e) => setTypeFilter(e.target.value) },
+            React.createElement("option", { value: "" }, "All categories"),
+            ["Ambulance", "Police", "Fire"].map((t) => React.createElement("option", { key: t }, t))
+          ),
+          React.createElement(
+            "select",
+            { className: inputClasses, value: statusFilter, onChange: (e) => setStatusFilter(e.target.value) },
+            React.createElement("option", { value: "" }, "All statuses"),
+            ["Available", "Dispatched", "Busy"].map((s) => React.createElement("option", { key: s }, s))
+          )
+        ),
+        React.createElement(
+          Card,
+          { className: "overflow-x-auto" },
+          React.createElement(
+            "table",
+            { className: "w-full text-sm" },
+            React.createElement(
+              "thead",
+              { className: "text-slate-400 text-left" },
+              React.createElement(
+                "tr",
+                null,
+                ["ID", "Type", "Location", "Status", "Incident", "Updated", "Actions"].map((h) =>
+                  React.createElement("th", { key: h, className: "p-2" }, h)
+                )
+              )
+            ),
+            React.createElement(
+              "tbody",
+              null,
+              filteredVehicles.map((v) =>
+                React.createElement(
+                  "tr",
+                  { key: v.id, className: "border-t border-slate-700/50" },
+                  React.createElement("td", { className: "p-2 font-mono" }, v.id),
+                  React.createElement("td", { className: "p-2" }, v.type),
+                  React.createElement("td", { className: "p-2" }, v.area),
+                  React.createElement("td", { className: "p-2" }, React.createElement(Badge, { v: v.status })),
+                  React.createElement("td", { className: "p-2" }, v.incident || "-"),
+                  React.createElement("td", { className: "p-2 text-slate-400" }, formatRelativeTime(v.updated)),
+                  React.createElement(
+                    "td",
+                    { className: "p-2 flex gap-1 flex-wrap" },
+                    React.createElement(
+                      "select",
+                      {
+                        className: inputClasses + " !w-auto !py-1",
+                        value: v.status,
+                        onChange: (e) => dispatch({ type: "vstatus", id: v.id, v: e.target.value }),
+                      },
+                      ["Available", "Dispatched", "Busy"].map((s) => React.createElement("option", { key: s }, s))
+                    ),
+                    v.status === "Available" &&
+                      React.createElement(
+                        "select",
+                        {
+                          className: inputClasses + " !w-auto !py-1",
+                          value: "",
+                          onChange: (e) =>
+                            e.target.value && dispatch({ type: "assign", veh: v.id, inc: e.target.value }),
+                        },
+                        React.createElement("option", { value: "" }, "Assign\u2026"),
+                        unresolvedIncidents.map((i) =>
+                          React.createElement("option", { key: i.id, value: i.id }, `${i.id} ${i.type}`)
+                        )
+                      ),
+                    React.createElement(
+                      "select",
+                      {
+                        title: "Edit location",
+                        className: inputClasses + " !w-auto !py-1",
+                        value: v.area,
+                        onChange: (e) =>
+                          dispatch({
+                            type: "editVehicle",
+                            id: v.id,
+                            patch: { area: e.target.value, loc: PUNE_AREAS[e.target.value] },
+                          }),
+                      },
+                      Object.keys(PUNE_AREAS).map((a) => React.createElement("option", { key: a }, a))
+                    )
+                  )
+                )
+              ),
+              !filteredVehicles.length &&
+                React.createElement(
+                  "tr",
+                  null,
+                  React.createElement("td", { colSpan: 7, className: "p-6 text-center text-slate-500" }, "No vehicles match.")
+                )
+            )
+          )
+        )
+      );
+    }
+
+    // --- Tab 4: Hospital Beds ---
+    const OccupancyBar = ({ a }) => {
+      const pct = a[0] ? (a[1] / a[0]) * 100 : 0;
+      return React.createElement(
+        "div",
+        { className: "w-24 h-2 bg-slate-700 rounded" },
+        React.createElement("div", {
+          className: `h-2 rounded ${pct > 90 ? "bg-red-500" : pct > 75 ? "bg-orange-500" : "bg-green-500"}`,
+          style: { width: `${pct}%` },
+        })
+      );
+    };
+
+    function HospitalBedsView() {
+      const [state, dispatch] = useApp();
+      const isOperatorOrAdmin = state.role !== "Citizen";
+      const [search, setSearch] = useState("");
+      const [areaFilter, setAreaFilter] = useState("");
+      const [filterIcu, setFilterIcu] = useState(false);
+      const [filterGen, setFilterGen] = useState(false);
+      const [sortDesc, setSortDesc] = useState(true);
+      const [selectedIncId, setSelectedIncId] = useState("");
+      const [selectedHospitalId, setSelectedHospitalId] = useState("");
+
+      const filteredHospitals = state.hospitals
+        .filter(
+          (h) =>
+            h.name.toLowerCase().includes(search.toLowerCase()) &&
+            (!areaFilter || h.area === areaFilter) &&
+            (!filterIcu || availableBeds(h.icu) > 0) &&
+            (!filterGen || availableBeds(h.gen) > 0)
+        )
+        .sort((a, b) =>
+          sortDesc ? availableBeds(b.gen) - availableBeds(a.gen) : availableBeds(a.gen) - availableBeds(b.gen)
+        );
+
+      const targetInc = state.incidents.find((i) => i.id === selectedIncId);
+      const suitableHospitals = targetInc
+        ? state.hospitals
+            .filter((h) => h.ed !== "Full" && availableBeds(h.gen) > 0 && availableBeds(h.icu) > 0)
+            .map((h) => ({ ...h, d: calcDistance(h.loc, targetInc.loc) }))
+            .sort((a, b) => a.d - b.d)
+        : [];
+
+      const currentHospital = state.hospitals.find((h) => h.id === selectedHospitalId);
+
+      const renderBedControl = (h, kind, label) =>
+        React.createElement(
+          "div",
+          { className: "text-sm py-1" },
+          label,
+          ": occupied ",
+          h[kind][1],
+          "/",
+          h[kind][0],
+          " \xB7 available ",
+          React.createElement("b", { className: "text-green-400" }, availableBeds(h[kind])),
+          isOperatorOrAdmin &&
+            React.createElement(
+              "span",
+              { className: "ml-2" },
+              React.createElement(
+                "button",
+                {
+                  className: secondaryButtonClasses + " !py-0.5",
+                  onClick: () => dispatch({ type: "bed", id: h.id, kind, delta: 1 }),
+                },
+                "+ admit"
+              ),
+              " ",
+              React.createElement(
+                "button",
+                {
+                  className: secondaryButtonClasses + " !py-0.5",
+                  onClick: () => dispatch({ type: "bed", id: h.id, kind, delta: -1 }),
+                },
+                "\u2212 discharge"
+              )
+            )
+        );
+
+      return React.createElement(
+        "div",
+        { className: "space-y-4" },
+        React.createElement(
+          "div",
+          { className: "flex gap-2 items-center" },
+          React.createElement("h1", { className: "text-xl font-semibold" }, "Hospital Bed Availability")
+        ),
+        React.createElement(
+          "p",
+          { className: "text-xs text-orange-300" },
+          "Hospital names are real public facilities (approximate); bed counts are simulated. Always verify bed availability with the hospital before transporting a patient. Available = Total \u2212 Occupied."
+        ),
+        React.createElement(
+          "div",
+          { className: "grid sm:grid-cols-4 gap-2" },
+          React.createElement("input", {
+            className: inputClasses,
+            placeholder: "Search hospital",
+            value: search,
+            onChange: (e) => setSearch(e.target.value),
+          }),
+          React.createElement(
+            "select",
+            { className: inputClasses, value: areaFilter, onChange: (e) => setAreaFilter(e.target.value) },
+            React.createElement("option", { value: "" }, "All areas"),
+            [...new Set(state.hospitals.map((h) => h.area))].map((a) =>
+              React.createElement("option", { key: a }, a)
+            )
+          ),
+          React.createElement(
+            "label",
+            { className: "flex items-center gap-2 text-sm" },
+            React.createElement("input", {
+              type: "checkbox",
+              checked: filterIcu,
+              onChange: (e) => setFilterIcu(e.target.checked),
+            }),
+            "ICU available"
+          ),
+          React.createElement(
+            "label",
+            { className: "flex items-center gap-2 text-sm" },
+            React.createElement("input", {
+              type: "checkbox",
+              checked: filterGen,
+              onChange: (e) => setFilterGen(e.target.checked),
+            }),
+            "General beds available"
+          )
+        ),
+        React.createElement(
+          Card,
+          { className: "overflow-x-auto" },
+          React.createElement(
+            "table",
+            { className: "w-full text-sm" },
+            React.createElement(
+              "thead",
+              { className: "text-slate-400 text-left" },
+              React.createElement(
+                "tr",
+                null,
+                React.createElement("th", { className: "p-2" }, "Hospital"),
+                React.createElement("th", null, "Gen total"),
+                React.createElement("th", null, "Occupancy"),
+                React.createElement(
+                  "th",
+                  { className: "cursor-pointer", onClick: () => setSortDesc(!sortDesc) },
+                  "Avail ",
+                  sortDesc ? "\u25BC" : "\u25B2"
+                ),
+                React.createElement("th", null, "ICU total"),
+                React.createElement("th", null, "ICU occ"),
+                React.createElement("th", null, "ICU avail"),
+                React.createElement("th", null, "ED"),
+                React.createElement("th", null, "Updated")
+              )
+            ),
+            React.createElement(
+              "tbody",
+              null,
+              filteredHospitals.map((h) =>
+                React.createElement(
+                  "tr",
+                  {
+                    key: h.id,
+                    onClick: () => setSelectedHospitalId(h.id),
+                    className: `border-t border-slate-700/50 cursor-pointer hover:bg-slate-800/60 ${
+                      selectedHospitalId === h.id ? "bg-slate-700/50" : ""
+                    }`,
+                  },
+                  React.createElement(
+                    "td",
+                    { className: "p-2" },
+                    h.name,
+                    React.createElement("div", { className: "text-xs text-slate-500" }, h.area)
+                  ),
+                  React.createElement("td", null, h.gen[0]),
+                  React.createElement(
+                    "td",
+                    null,
+                    React.createElement(OccupancyBar, { a: h.gen }),
+                    React.createElement("span", { className: "text-xs text-slate-500" }, `${h.gen[1]} occ`)
+                  ),
+                  React.createElement("td", { className: "font-semibold text-green-400" }, availableBeds(h.gen)),
+                  React.createElement("td", null, h.icu[0]),
+                  React.createElement("td", null, h.icu[1]),
+                  React.createElement(
+                    "td",
+                    { className: availableBeds(h.icu) < 3 ? "text-red-400 font-semibold" : "text-green-400" },
+                    availableBeds(h.icu),
+                    availableBeds(h.icu) < 3 && " \u26A0 critical"
+                  ),
+                  React.createElement("td", null, React.createElement(Badge, { v: h.ed })),
+                  React.createElement("td", { className: "text-slate-400" }, formatRelativeTime(h.updated))
+                )
+              ),
+              !filteredHospitals.length &&
+                React.createElement(
+                  "tr",
+                  null,
+                  React.createElement("td", { colSpan: 9, className: "p-6 text-center text-slate-500" }, "No hospitals match.")
+                )
+            )
+          )
+        ),
+        React.createElement(
+          "p",
+          { className: "text-xs text-slate-500" },
+          "Tap a row for detailed capacity",
+          isOperatorOrAdmin ? " and to adjust occupied beds (demo)" : "",
+          "."
+        ),
+        currentHospital &&
+          React.createElement(
+            Card,
+            { title: `Detail: ${currentHospital.name} (${currentHospital.area})` },
+            renderBedControl(currentHospital, "gen", "General beds"),
+            renderBedControl(currentHospital, "icu", "ICU beds"),
+            React.createElement(
+              "div",
+              { className: "text-xs text-slate-500 mt-2" },
+              `ED: ${currentHospital.ed} \xB7 Updated ${formatRelativeTime(currentHospital.updated)} \xB7 Capacity simulated.`
+            )
+          ),
+        React.createElement(
+          Card,
+          { title: "Find suitable hospital (needs \u22651 general + \u22651 ICU bed, ED not full)" },
+          React.createElement(
+            "select",
+            {
+              className: inputClasses + " sm:w-80",
+              value: selectedIncId,
+              onChange: (e) => setSelectedIncId(e.target.value),
+            },
+            React.createElement("option", { value: "" }, "Select incident\u2026"),
+            state.incidents.map((i) =>
+              React.createElement("option", { key: i.id, value: i.id }, `${i.id} ${i.type} - ${i.area}`)
+            )
+          ),
+          targetInc &&
+            React.createElement(
+              "ol",
+              { className: "mt-3 text-sm space-y-1 list-decimal ml-5" },
+              suitableHospitals.map((h) =>
+                React.createElement(
+                  "li",
+                  { key: h.id },
+                  `${h.name}: ${h.d.toFixed(1)} km, ${availableBeds(h.gen)} gen / ${availableBeds(h.icu)} ICU beds (sample)`
+                )
+              ),
+              !suitableHospitals.length &&
+                React.createElement("li", { className: "list-none text-slate-500" }, "None match.")
+            )
+        )
+      );
+    }
+
+    // --- Tab 5: Incidents & Dispatch ---
+    function IncidentsDispatchView() {
+      const [state, dispatch] = useApp();
+      const currentInc = state.incidents.find((i) => i.id === state.sel) || state.incidents[0];
+      const rec = currentInc && recommendResources(state, currentInc);
+
+      const updateCurrentInc = (patch, msg) => {
+        dispatch({ type: "inc", id: currentInc.id, patch, msg });
+      };
+
+      return React.createElement(
+        "div",
+        { className: "space-y-4" },
+        React.createElement(
+          "div",
+          { className: "flex gap-2 items-center" },
+          React.createElement("h1", { className: "text-xl font-semibold" }, "Incidents & Dispatch")
+        ),
+        React.createElement(
+          "p",
+          { className: "text-xs text-orange-300" },
+          "Demonstration workflow only. Nothing here contacts or dispatches real services. Recommendations are advisory, not medical triage."
+        ),
+        React.createElement(
+          "div",
+          { className: "grid lg:grid-cols-3 gap-4" },
+          React.createElement(
+            Card,
+            { title: `Incidents (${state.incidents.length})`, className: "max-h-[70vh] overflow-y-auto" },
+            state.incidents.map((inc) =>
+              React.createElement(
+                "button",
+                {
+                  key: inc.id,
+                  onClick: () => dispatch({ type: "select", v: inc.id }),
+                  className: `w-full text-left p-2 rounded-lg mb-1 text-sm ${
+                    inc.id === currentInc?.id ? "bg-slate-700" : "hover:bg-slate-800"
+                  }`,
+                },
+                React.createElement(
+                  "div",
+                  { className: "flex justify-between" },
+                  React.createElement("b", null, inc.id),
+                  React.createElement(Badge, { v: inc.sev })
+                ),
+                `${inc.type} \xB7 ${inc.area}`,
+                React.createElement(
+                  "div",
+                  { className: "flex gap-1 mt-1" },
+                  React.createElement(Badge, { v: inc.status }),
+                  !inc.verified && React.createElement(Badge, { v: "Unverified" })
+                )
+              )
+            )
+          ),
+          currentInc &&
+            React.createElement(
+              "div",
+              { className: "lg:col-span-2 space-y-4" },
+              React.createElement(
+                Card,
+                { title: `${currentInc.id} \xB7 ${currentInc.type} \xB7 ${currentInc.area}` },
+                React.createElement(
+                  "div",
+                  { className: "flex flex-wrap gap-2 items-center mb-3" },
+                  React.createElement(Badge, { v: currentInc.sev }),
+                  React.createElement(Badge, { v: currentInc.status }),
+                  !currentInc.verified && React.createElement(Badge, { v: "Unverified" }),
+                  React.createElement(
+                    "span",
+                    { className: "text-xs text-slate-400" },
+                    `Reported ${formatRelativeTime(currentInc.time)} \xB7 Vehicle: ${currentInc.vehicle || "none"}`
+                  )
+                ),
+                currentInc.desc && React.createElement("p", { className: "text-sm mb-3" }, currentInc.desc),
+                React.createElement(
+                  "div",
+                  { className: "flex flex-wrap gap-2" },
+                  React.createElement(
+                    "button",
+                    {
+                      className: secondaryButtonClasses,
+                      disabled: currentInc.verified,
+                      onClick: () => updateCurrentInc({ verified: true, status: "Verified" }, "Verified by operator"),
+                    },
+                    "Verify"
+                  ),
+                  React.createElement(
+                    "select",
+                    {
+                      className: inputClasses + " !w-auto",
+                      value: currentInc.sev,
+                      onChange: (e) => updateCurrentInc({ sev: e.target.value }, `Priority set to ${e.target.value}`),
+                    },
+                    SEVERITY_LEVELS.map((s) => React.createElement("option", { key: s }, s))
+                  ),
+                  React.createElement(
+                    "select",
+                    {
+                      className: inputClasses + " !w-auto",
+                      value: currentInc.status,
+                      onChange: (e) => updateCurrentInc({ status: e.target.value }, `Status \u2192 ${e.target.value}`),
+                    },
+                    INCIDENT_STATUSES.map((s) => React.createElement("option", { key: s }, s))
+                  ),
+                  React.createElement(
+                    "button",
+                    {
+                      className: secondaryButtonClasses,
+                      onClick: () => {
+                        if (currentInc.vehicle) {
+                          dispatch({ type: "vstatus", id: currentInc.vehicle, v: "Available" });
+                        }
+                        updateCurrentInc({ status: "Resolved" }, "Marked resolved");
+                      },
+                    },
+                    "Mark resolved"
+                  )
+                )
+              ),
+              React.createElement(
+                Card,
+                { title: "Resource recommendation (advisory, from demo dataset)" },
+                rec.vehicles[0]
+                  ? React.createElement(
+                      "div",
+                      { className: "text-sm space-y-2" },
+                      React.createElement(
+                        "p",
+                        null,
+                        "Suggested resource: ",
+                        React.createElement("b", null, rec.vehicles[0].id),
+                        `. It is the nearest available demo ${rec.type.toLowerCase()} (${rec.vehicles[0].d.toFixed(1)} km, from ${rec.vehicles[0].area}).`
+                      ),
+                      React.createElement(
+                        "button",
+                        {
+                          className: primaryButtonClasses,
+                          onClick: () => dispatch({ type: "assign", veh: rec.vehicles[0].id, inc: currentInc.id }),
+                        },
+                        `Assign ${rec.vehicles[0].id} (demo)`
+                      ),
+                      React.createElement(
+                        "div",
+                        { className: "text-slate-400" },
+                        "Others: ",
+                        rec.vehicles.slice(1, 4).map((v) => `${v.id} (${v.d.toFixed(1)} km)`).join(", ") || "none"
+                      )
+                    )
+                  : React.createElement(
+                      "p",
+                      { className: "text-sm text-orange-300" },
+                      `No available ${rec.type.toLowerCase()} in the demo dataset.`
+                    ),
+                rec.police[0] &&
+                  React.createElement(
+                    "p",
+                    { className: "text-sm mt-2" },
+                    `Also consider police: ${rec.police[0].id} (${rec.police[0].d.toFixed(1)} km).`
+                  ),
+                rec.hospitals.length > 0 &&
+                  React.createElement(
+                    "p",
+                    { className: "text-sm mt-3" },
+                    "Suggested hospital: ",
+                    React.createElement("b", null, rec.hospitals[0].name),
+                    `. It has ${availableBeds(rec.hospitals[0].gen)} demo general beds and ${availableBeds(rec.hospitals[0].icu)} demo ICU beds marked available (${rec.hospitals[0].d.toFixed(1)} km). Verify with the hospital first.`
+                  ),
+                React.createElement(
+                  "div",
+                  { className: "text-sm mt-3" },
+                  React.createElement("b", null, "Nearby blockages (<4 km):"),
+                  " ",
+                  rec.blocks.map((b) => `${b.road} (${b.d.toFixed(1)} km, ${b.sev})`).join("; ") || "none known"
+                )
+              ),
+              React.createElement(
+                Card,
+                { title: "Timeline" },
+                currentInc.timeline.map((entry, idx) =>
+                  React.createElement(
+                    "div",
+                    { key: idx, className: "text-sm py-1 border-l-2 border-red-500 pl-3 mb-1" },
+                    `${new Date(entry.t).toLocaleTimeString()} - ${entry.msg}`
+                  )
+                )
+              )
+            )
+        )
+      );
+    }
+
+    // --- Tab 6: Report / Citizen Help ---
+    function ReportHelpView({ go }) {
+      const [state, dispatch] = useApp();
+      const [form, setForm] = useState({
+        type: "Fire",
+        desc: "",
+        area: "Kothrud",
+        sev: "Medium",
+        name: "",
+        anon: false,
+      });
+      const [previewUrl, setPreviewUrl] = useState(null);
+      const [errors, setErrors] = useState({});
+
+      const handleSubmit = (e) => {
+        e.preventDefault();
+        const errs = {};
+        if (form.desc.trim().length < 10) errs.desc = "Describe the situation (min 10 characters)";
+        if (!form.anon && !form.name.trim()) errs.name = "Enter a name or choose anonymous";
+        setErrors(errs);
+        if (!Object.keys(errs).length) {
+          const newInc = createIncident(
+            "INC-" + (Date.now() % 100000),
+            form.type,
+            form.area,
+            form.sev,
+            "Reported",
+            false,
+            0,
+            form.desc
+          );
+          dispatch({ type: "addIncident", v: newInc });
+          setForm({ ...form, desc: "" });
+          setPreviewUrl(null);
+        }
+      };
+
+      const verifiedPublicAlerts = state.incidents.filter((i) => i.verified && i.status !== "Resolved").slice(0, 3);
+
+      return React.createElement(
+        "div",
+        { className: "grid lg:grid-cols-2 gap-4" },
+        React.createElement(
+          "div",
+          { className: "space-y-4" },
+          React.createElement(
+            "div",
+            { className: "flex gap-2 items-center" },
+            React.createElement("h1", { className: "text-xl font-semibold" }, "Report an Emergency / Hazard")
+          ),
+          React.createElement(
+            "div",
+            { className: "rounded-xl border-2 border-red-600 bg-red-900/30 p-4" },
+            React.createElement("b", null, "In a real emergency call 112 (India's national emergency number)."),
+            React.createElement(
+              "p",
+              { className: "text-xs mt-1 text-slate-300" },
+              "This prototype does not place calls, alert authorities, or dispatch services. Submitting a report only saves it in this demo."
+            )
+          ),
+          React.createElement(
+            Card,
+            null,
+            React.createElement(
+              "form",
+              { onSubmit: handleSubmit, className: "space-y-3" },
+              React.createElement(
+                "select",
+                {
+                  className: inputClasses,
+                  value: form.type,
+                  onChange: (e) => setForm({ ...form, type: e.target.value }),
+                },
+                INCIDENT_TYPES.map((t) => React.createElement("option", { key: t }, t))
+              ),
+              React.createElement("textarea", {
+                className: inputClasses,
+                rows: 3,
+                placeholder: "Description",
+                value: form.desc,
+                onChange: (e) => setForm({ ...form, desc: e.target.value }),
+              }),
+              errors.desc && React.createElement("p", { className: "text-red-400 text-xs" }, errors.desc),
+              React.createElement(
+                "div",
+                { className: "grid grid-cols-2 gap-2" },
+                React.createElement(
+                  "select",
+                  {
+                    className: inputClasses,
+                    value: form.area,
+                    onChange: (e) => setForm({ ...form, area: e.target.value }),
+                  },
+                  Object.keys(PUNE_AREAS).map((a) => React.createElement("option", { key: a }, a))
+                ),
+                React.createElement(
+                  "select",
+                  {
+                    className: inputClasses,
+                    value: form.sev,
+                    onChange: (e) => setForm({ ...form, sev: e.target.value }),
+                  },
+                  SEVERITY_LEVELS.map((s) => React.createElement("option", { key: s }, s))
+                )
+              ),
+              React.createElement("input", {
+                type: "file",
+                accept: "image/*",
+                className: "text-xs",
+                onChange: (e) => e.target.files[0] && setPreviewUrl(URL.createObjectURL(e.target.files[0])),
+              }),
+              previewUrl && React.createElement("img", { src: previewUrl, alt: "preview", className: "h-24 rounded" }),
+              React.createElement(
+                "label",
+                { className: "flex gap-2 text-sm" },
+                React.createElement("input", {
+                  type: "checkbox",
+                  checked: form.anon,
+                  onChange: (e) => setForm({ ...form, anon: e.target.checked }),
+                }),
+                "Report anonymously"
+              ),
+              !form.anon &&
+                React.createElement("input", {
+                  className: inputClasses,
+                  placeholder: "Your name",
+                  value: form.name,
+                  onChange: (e) => setForm({ ...form, name: e.target.value }),
+                }),
+              errors.name && React.createElement("p", { className: "text-red-400 text-xs" }, errors.name),
+              React.createElement("button", { className: primaryButtonClasses }, "Submit report (demo)"),
+              React.createElement(
+                "p",
+                { className: "text-xs text-slate-400" },
+                "Reports are marked UNVERIFIED until an operator reviews them. Do not include private personal or patient details."
+              )
+            )
+          )
+        ),
+        React.createElement(
+          "div",
+          { className: "space-y-4" },
+          React.createElement(
+            Card,
+            { title: "Verified public alerts (sample)" },
+            verifiedPublicAlerts.map((i) =>
+              React.createElement(
+                "div",
+                { key: i.id, className: "text-sm py-1" },
+                `${i.type} near ${i.area} `,
+                React.createElement(Badge, { v: i.sev })
+              )
+            )
+          ),
+          React.createElement(
+            Card,
+            { title: "Road closures (sample)" },
+            state.blocks
+              .filter((b) => b.active)
+              .map((b) =>
+                React.createElement("div", { key: b.id, className: "text-sm py-1" }, `${b.road}, ${b.area}: ${b.reason}`)
+              )
+          ),
+          React.createElement(
+            Card,
+            { title: `Nearby help from ${form.area} (approximate, sample capacity)` },
+            React.createElement(
+              "div",
+              { className: "text-sm space-y-1" },
+              React.createElement("b", null, "Hospitals"),
+              [...state.hospitals]
+                .map((h) => ({ ...h, d: calcDistance(h.loc, PUNE_AREAS[form.area]) }))
+                .sort((a, b) => a.d - b.d)
+                .slice(0, 3)
+                .map((h) =>
+                  React.createElement(
+                    "div",
+                    { key: h.id },
+                    `${h.name} \xB7 ${h.d.toFixed(1)} km \xB7 ${availableBeds(h.gen)} gen / ${availableBeds(h.icu)} ICU (sample)`
+                  )
+                ),
+              React.createElement("b", null, "Police & fire stations"),
+              STATIONS.map(([stType, name, coords]) => ({
+                t: stType,
+                n: name,
+                d: calcDistance(coords, PUNE_AREAS[form.area]),
+              }))
+                .sort((a, b) => a.d - b.d)
+                .slice(0, 4)
+                .map((st) =>
+                  React.createElement("div", { key: st.n }, `${st.t}: ${st.n} \xB7 ${st.d.toFixed(1)} km`)
+                )
+            )
+          ),
+          React.createElement(
+            Card,
+            { title: "Emergency numbers (verify locally)" },
+            React.createElement(
+              "div",
+              { className: "grid grid-cols-2 gap-1 text-sm" },
+              EMERGENCY_NUMBERS.map(([title, num]) =>
+                React.createElement("div", { key: title }, `${title}: `, React.createElement("b", null, num))
+              )
+            ),
+            React.createElement("p", { className: "text-xs text-slate-400 mt-2" }, "This app does not place calls or alert anyone.")
+          ),
+          React.createElement(
+            Card,
+            { title: "Preparedness basics" },
+            React.createElement(
+              "ul",
+              { className: "text-sm list-disc ml-5 space-y-1" },
+              React.createElement("li", null, "Keep a charged phone and a small emergency kit."),
+              React.createElement("li", null, "Follow instructions from official authorities."),
+              React.createElement("li", null, "Avoid flooded roads; road conditions change quickly."),
+              React.createElement("li", null, "Know your nearest hospital and exit routes.")
+            )
+          ),
+          React.createElement(
+            "button",
+            { className: "text-sm text-red-300 underline", onClick: () => go("map") },
+            "View map \u2192"
+          )
+        )
+      );
+    }
+
+    // --- Role Navigation Config ---
+    const ROLES = ["Citizen", "Hospital Operator", "Emergency Administrator"];
+
+    const NAV_ITEMS = [
+      ["dash", "Command Center", Icons.Dashboard, DashboardView, 0],
+      ["map", "Live Map", Icons.Map, LiveMapView, 0],
+      ["inc", "Incidents & Dispatch", Icons.Incident, IncidentsDispatchView, 2],
+      ["veh", "Vehicles", Icons.Vehicle, VehiclesView, 2],
+      ["hos", "Hospital Beds", Icons.Hospital, HospitalBedsView, 1],
+      ["rep", "Report / Help", Icons.Report, ReportHelpView, 0],
+    ];
+
+    const isTabAllowedForRole = (item, currentRole) => {
+      const minLevel = item[4];
+      if (minLevel === 0) return true;
+      if (minLevel === 1 && currentRole !== "Citizen") return true;
+      if (minLevel === 2 && currentRole === "Emergency Administrator") return true;
+      return false;
+    };
+
+    // --- Main Layout ---
+    function AppLayout() {
+      const [state, dispatch] = useApp();
+      const [activeTab, setActiveTab] = useState("dash");
+
+      const visibleTabs = NAV_ITEMS.filter((item) => isTabAllowedForRole(item, state.role));
+      const currentTabDef = visibleTabs.find((item) => item[0] === activeTab) || visibleTabs[0];
+      const ActiveComponent = currentTabDef[3];
+
+      useEffect(() => {
+        if (!state.toast) return;
+        const timer = setTimeout(() => dispatch({ type: "toast", v: null }), 3500);
+        return () => clearTimeout(timer);
+      }, [state.toast]);
+
+      const simulateRoadAccident = () => {
+        const accIncident = createIncident(
+          "INC-" + (Date.now() % 100000),
+          "Road Accident",
+          "Swargate",
+          "Critical",
+          "Verified",
+          true,
+          0,
+          "SIMULATED major road accident, multi-vehicle"
+        );
+        dispatch({ type: "addIncident", v: accIncident });
+        setActiveTab(state.role === "Emergency Administrator" ? "inc" : "map");
+      };
+
+      return React.createElement(
+        "div",
+        { className: "min-h-screen md:flex" },
+        // Desktop Sidebar
+        React.createElement(
+          "aside",
+          { className: "hidden md:flex w-60 flex-col bg-slate-900 border-r border-slate-800 p-4 gap-1 sticky top-0 h-screen" },
+          React.createElement(
+            "div",
+            { className: "text-xl font-bold text-red-500 mb-4" },
+            "RESQ",
+            React.createElement("span", { className: "text-white" }, "NET")
+          ),
+          visibleTabs.map((item) => {
+            const Icon = item[2];
+            return React.createElement(
+              "button",
+              {
+                key: item[0],
+                onClick: () => setActiveTab(item[0]),
+                className: `flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-left ${
+                  currentTabDef[0] === item[0] ? "bg-red-600/20 text-red-300" : "text-slate-400 hover:bg-slate-800"
+                }`,
+              },
+              React.createElement(Icon, { size: 18 }),
+              item[1]
+            );
+          }),
+          React.createElement(
+            "div",
+            { className: "mt-auto text-xs text-slate-500" },
+            "Prototype. Role switching is a UI demo, not authentication. No real dispatch occurs."
+          )
+        ),
+        // Main Screen
+        React.createElement(
+          "div",
+          { className: "flex-1 min-w-0 pb-16 md:pb-0" },
+          React.createElement(
+            "header",
+            { className: "sticky top-0 z-[1000] bg-slate-900/95 backdrop-blur border-b border-slate-800 p-3 flex flex-wrap items-center gap-2" },
+            React.createElement(
+              "span",
+              { className: "text-xs text-slate-400 hidden sm:inline" },
+              "Simulated data. Not connected to real emergency or hospital systems."
+            ),
+            React.createElement(
+              "div",
+              { className: "ml-auto flex flex-wrap gap-2 items-center" },
+              React.createElement(
+                "select",
+                {
+                  className: inputClasses + " !w-auto",
+                  value: state.role,
+                  onChange: (e) => dispatch({ type: "role", v: e.target.value }),
+                  "aria-label": "Demo role",
+                },
+                ROLES.map((r) => React.createElement("option", { key: r }, r))
+              ),
+              React.createElement(
+                "button",
+                { className: secondaryButtonClasses, onClick: () => dispatch({ type: "sim" }) },
+                state.sim
+                  ? React.createElement(Icons.Pause, { size: 14, className: "inline mr-1" })
+                  : React.createElement(Icons.Play, { size: 14, className: "inline mr-1" }),
+                state.sim ? "Stop" : "Start",
+                " Simulation"
+              ),
+              React.createElement(
+                "button",
+                { className: primaryButtonClasses, onClick: simulateRoadAccident },
+                React.createElement(Icons.Lightning, { size: 14, className: "inline mr-1" }),
+                "Simulate Major Road Accident"
+              ),
+              React.createElement(
+                "button",
+                { className: secondaryButtonClasses, onClick: () => dispatch({ type: "reset" }) },
+                React.createElement(Icons.Reset, { size: 14, className: "inline mr-1" }),
+                "Reset"
+              )
+            )
+          ),
+          React.createElement(
+            "main",
+            { className: "p-4 max-w-7xl mx-auto" },
+            React.createElement(ErrorBoundary, { key: currentTabDef[0] }, React.createElement(ActiveComponent, { go: setActiveTab }))
+          )
+        ),
+        // Mobile Navigation
+        React.createElement(
+          "nav",
+          { className: "md:hidden fixed bottom-0 inset-x-0 z-[1000] bg-slate-900 border-t border-slate-800 flex overflow-x-auto" },
+          visibleTabs.map((item) => {
+            const Icon = item[2];
+            return React.createElement(
+              "button",
+              {
+                key: item[0],
+                onClick: () => setActiveTab(item[0]),
+                className: `flex-1 min-w-[72px] py-2 flex flex-col items-center text-[10px] ${
+                  currentTabDef[0] === item[0] ? "text-red-400" : "text-slate-400"
+                }`,
+              },
+              React.createElement(Icon, { size: 18 }),
+              item[1].split(" ")[0]
+            );
+          })
+        ),
+        state.toast &&
+          React.createElement(
+            "div",
+            { className: "fixed top-16 right-4 z-[2000] bg-green-600 text-white text-sm px-4 py-2 rounded-lg shadow-lg" },
+            state.toast
+          )
+      );
+    }
+
+    // --- Mount Application ---
+    window.ReactDOM.createRoot(document.getElementById("root")).render(
+      React.createElement(AppProvider, null, React.createElement(AppLayout, null))
+    );
+  })();
+  </script>
+</body>
+</html>
